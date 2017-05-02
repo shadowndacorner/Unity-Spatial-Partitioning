@@ -308,25 +308,29 @@ public class SparseOctree<T> where T : class
 
     struct ClosestReturn
     {
-        public ClosestReturn(float d, OctreeNode close)
+        public ClosestReturn(float d)
         {
             dist = d;
-            closest = close;
+            closest = null;
+        }
+
+        void Add(OctreeNode node)
+        {
+            closest.Add(node);
         }
 
         public float dist;
-        public OctreeNode closest;
+        public List<OctreeNode> closest;
     }
-    private ClosestReturn ClosestChildRecursive(OctreeNode parent, OctreeNode target, HashSet<OctreeNode> tested)
+
+    private ClosestReturn ClosestChildWithContainedRecursive(OctreeNode parent, OctreeNode target, Vector3 pos, float maxDist = float.PositiveInfinity)
     {
-        if (tested.Contains(parent))
+        var pdist = Vector3.SqrMagnitude(pos - parent.NodeBounds.ClosestPoint(pos));
+        if (pdist > maxDist)
             return new ClosestReturn();
 
-        if (parent.Divisions == null)
-            return new ClosestReturn();
-
-        OctreeNode child = null;
-        float dist = float.PositiveInfinity;
+        // If we're definitely outside of the max distance, ignore
+        var ret = new ClosestReturn(maxDist);
         for (int z = 0; z < 2; ++z)
         {
             for (int y = 0; y < 2; ++y)
@@ -334,19 +338,61 @@ public class SparseOctree<T> where T : class
                 for (int x = 0; x < 2; ++x)
                 {
                     var cur = parent.Divisions[x, y, z];
-                    if (cur == target)
+                    if (cur == target || cur.Contained.Count == 0)
                         continue;
 
-                    float mdist;
-                    if ((mdist = Vector3.SqrMagnitude(target.NodeBounds.center - cur.NodeBounds.center)) < dist)
+                    if (cur.Depth == OctreeDepth)
                     {
-                        child = cur;
-                        dist = mdist;
+                        float mdist;
+                        
+                        if ((mdist = Vector3.SqrMagnitude(pos - cur.NodeBounds.ClosestPoint(pos))) < ret.dist)
+                        {
+                            if (ret.closest == null)
+                                ret.closest = new List<OctreeNode>();
+                            else
+                                ret.closest.Clear();
+
+                            ret.closest.Add(cur);
+                            ret.dist = mdist;
+                        }
+                        else if (Mathf.Abs(mdist - ret.dist) <= float.Epsilon)
+                        {
+                            ret.closest.Add(cur);
+                        }
+                    }
+                    else
+                    {
+                        var closest = ClosestChildWithContainedRecursive(cur, target, pos, maxDist);
+                        // If the block didn't have anything, skip
+                        if (closest.closest == null)
+                            continue;
+
+                        if (closest.dist < ret.dist)
+                        {
+                            if (ret.closest == null)
+                                ret.closest = new List<OctreeNode>();
+                            else
+                                ret.closest.Clear();
+
+                            ret.dist = closest.dist;
+                            for (int i = 0; i < closest.closest.Count; ++i)
+                                ret.closest.Add(closest.closest[i]);
+                        }
+                        else if (Mathf.Abs(closest.dist - ret.dist) <= float.Epsilon)
+                        {
+                            for (int i = 0; i < closest.closest.Count; ++i)
+                                ret.closest.Add(closest.closest[i]);
+                        }
                     }
                 }
             }
         }
-        return new ClosestReturn(dist, child);
+
+        if (ret.closest != null && ret.closest.Count > 1)
+        {
+            Debug.Log("Wow!");
+        }
+        return ret;
     }
 
     public T BruteforceClosest(T obj)
@@ -373,9 +419,7 @@ public class SparseOctree<T> where T : class
     {
         var entry = Entries[obj];
 
-        // Find next closest node with something inside
-        var closest = ClosestChildRecursive(Root, entry.Node, new HashSet<OctreeNode>());
-
+        // Find the closest node within our current node
         T cobj = null;
         float dist = float.PositiveInfinity;
         if (entry.Node.Contained.Count > 1)
@@ -393,18 +437,23 @@ public class SparseOctree<T> where T : class
             }
         }
 
+        // Find the closest neighbor with something inside
+        var closest = ClosestChildWithContainedRecursive(Root, entry.Node, entry.position, dist);
         if (closest.closest != null)
         {
-            foreach (var v in closest.closest.Contained)
+            foreach (var node in closest.closest)
             {
-                float mdist;
-                if ((mdist = Vector3.SqrMagnitude(entry.position - Entries[v].position)) < dist)
+                foreach (var v in node.Contained)
                 {
-                    if (v == obj)
-                        continue;
+                    float mdist;
+                    if ((mdist = Vector3.SqrMagnitude(entry.position - Entries[v].position)) < dist)
+                    {
+                        if (v == obj)
+                            continue;
 
-                    dist = mdist;
-                    cobj = v;
+                        dist = mdist;
+                        cobj = v;
+                    }
                 }
             }
         }
@@ -415,7 +464,8 @@ public class SparseOctree<T> where T : class
     public T Closest(T obj)
     {
         if (true)
-            return OldClosest(obj);
+            return RecursiveClosest(obj);
+
         if (Root.Contained.Count == 1)
             return default(T);
 
