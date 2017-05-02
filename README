@@ -1,0 +1,5 @@
+This is a spatial partitioning library for Unity.  It includes a sparse octree implementation and will include a sparse quadtree implementation, along with several components which ensure that the octree is up to date.
+
+Usage:
+1) The scene have an OctreeComponent in it to define the scene bounds.
+2) Each object which contributes to the octree should have an OctreeElementComponent attached.
